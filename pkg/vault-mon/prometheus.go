@@ -3,12 +3,10 @@ package vault_mon
 import (
 	"crypto/x509"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
-
-	log "github.com/aarnaud/vault-pki-exporter/pkg/logger"
-	"github.com/spf13/viper"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -68,7 +66,6 @@ func PromWatchCerts(pkimon *PKIMon, interval time.Duration) {
 	}, []string{"source"})
 	go func() {
 		for {
-			pkimon.Watch()
 			pkis := pkimon.GetPKIs()
 			expiry.Reset()
 			age.Reset()
@@ -95,9 +92,6 @@ func PromWatchCerts(pkimon *PKIMon, interval time.Duration) {
 				certcount.WithLabelValues(pkiname).Set(float64(len(pki.certs)))
 				expired_cert_count.WithLabelValues(pkiname).Set(float64(pki.expiredCertsCounter))
 			}
-			if viper.GetBool("verbose") {
-				log.WithField("interval", interval).Infoln("Sleeping")
-			}
 			time.Sleep(interval)
 		}
 	}()
@@ -119,7 +113,6 @@ func getLabelValues(pkiname string, cert *x509.Certificate) []string {
 
 func PromStartExporter(port int) {
 	http.Handle("/metrics", promhttp.Handler())
-	log.Infoln("start prometheus exporter")
 	err := http.ListenAndServe(fmt.Sprintf(":%d", port), nil)
 	if err != nil {
 		log.Fatal(err)

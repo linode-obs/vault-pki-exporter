@@ -55,6 +55,11 @@ func init() {
 	if err := viper.BindPFlag("fetch_interval", flags.Lookup("fetch-interval")); err != nil {
 		log.Fatal(err)
 	}
+
+	flags.Duration("refresh-interval", time.Minute, "How many sec between metrics update")
+	if err := viper.BindPFlag("refresh_interval", flags.Lookup("refresh-interval")); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func main() {
@@ -75,12 +80,15 @@ func entrypoint() {
 		log.Errorln(err.Error())
 	}
 
+	pkiMon.Watch(viper.GetDuration("fetch_interval"))
+
 	if viper.GetBool("prometheus") || !viper.GetBool("influx") {
-		vaultMon.PromWatchCerts(&pkiMon, viper.GetDuration("fetch_interval"))
+		log.Infoln("start prometheus exporter")
+		vaultMon.PromWatchCerts(&pkiMon, viper.GetDuration("refresh_interval"))
 		vaultMon.PromStartExporter(viper.GetInt("port"))
 	}
 
 	if viper.GetBool("influx") {
-		vaultMon.InfluxWatchCerts(&pkiMon, viper.GetDuration("fetch_interval"), viper.GetBool("prometheus"))
+		vaultMon.InfluxWatchCerts(&pkiMon, viper.GetDuration("refresh_interval"), viper.GetBool("prometheus"))
 	}
 }

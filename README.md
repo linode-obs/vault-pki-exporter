@@ -37,6 +37,7 @@ Flags:
       --influx                      Enable InfluxDB Line Protocol
       --port int                    Prometheus exporter HTTP port (default 9333)
       --prometheus                  Enable prometheus exporter, default if nothing else
+      --refresh-interval duration   How many sec between metrics update (default 1m0s)
   -v, --verbose                     Enable verbose
 
 Use " [command] --help" for more information about a command.

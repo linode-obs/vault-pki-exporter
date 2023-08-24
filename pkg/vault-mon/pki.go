@@ -63,23 +63,27 @@ func (mon *PKIMon) loadPKI() error {
 	return nil
 }
 
-func (mon *PKIMon) Watch() {
+func (mon *PKIMon) Watch(interval time.Duration) {
 	log.Infoln("Start watching pki certs")
-
-	log.Infoln("Refresh PKI list")
-	err := mon.loadPKI()
-	if err != nil {
-		log.Errorln(err)
-	}
-	for _, pki := range mon.pkis {
-		log.Infof("Refresh PKI certificate for %s", pki.path)
-		pki.clearCerts()
-		err := pki.loadCerts()
-		if err != nil {
-			log.Errorln(err)
+	go func() {
+		for {
+			log.Infoln("Refresh PKI list")
+			err := mon.loadPKI()
+			if err != nil {
+				log.Errorln(err)
+			}
+			for _, pki := range mon.pkis {
+				log.Infof("Refresh PKI certificate for %s", pki.path)
+				pki.clearCerts()
+				err := pki.loadCerts()
+				if err != nil {
+					log.Errorln(err)
+				}
+			}
+			mon.Loaded = true
+			time.Sleep(interval)
 		}
-	}
-	mon.Loaded = true
+	}()
 }
 
 func (mon *PKIMon) GetPKIs() map[string]*PKI {
