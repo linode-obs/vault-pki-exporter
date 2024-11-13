@@ -226,10 +226,16 @@ func (pki *PKI) loadCerts() error {
 				// if already in map check the expiration
 				if certInMap, ok := pki.certs[cert.Subject.CommonName]; ok && certInMap.NotAfter.Unix() < cert.NotAfter.Unix() {
 					pki.certs[cert.Subject.CommonName] = cert
+					if viper.GetBool("verbose") {
+						log.WithField("common_name", cert.Subject.CommonName).Infof("cert in map")
+					}
 				}
 
 				if cert.NotAfter.Unix() < time.Now().Unix() {
 					pki.expiredCertsCounter++
+					if viper.GetBool("verbose") {
+						log.WithField("common_name", cert.Subject.CommonName).Infof("cert rejected as expired")
+					}
 				}
 
 				if _, ok := pki.certs[cert.Subject.CommonName]; !ok && cert.NotAfter.Unix() > time.Now().Unix() {
