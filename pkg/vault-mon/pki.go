@@ -20,7 +20,7 @@ import (
 
 type PKI struct {
 	path                string
-	certs               map[string]*x509.Certificate
+	certs               map[string]map[string]*x509.Certificate
 	crl                 *pkix.CertificateList
 	crlRawSize          int
 	expiredCertsCounter int
@@ -64,7 +64,7 @@ func (mon *PKIMon) loadPKI() error {
 	for name, mount := range mounts {
 		if mount.Type == "pki" {
 			if _, ok := mon.pkis[name]; !ok {
-				pki := PKI{path: name, vault: mon.vault}
+				pki := PKI{path: name, vault: mon.vault, certs: make(map[string]map[string]*x509.Certificate)}
 				mon.pkis[name] = &pki
 				log.Infof("%s loaded", pki.path)
 			}
@@ -127,7 +127,7 @@ func (pki *PKI) loadCrl() error {
 	if err != nil {
 		return err
 	}
-	block, _ := pem.Decode([]byte([]byte(secretCert.Certificate)))
+	block, _ := pem.Decode([]byte(secretCert.Certificate))
 	pki.crlRawSize = len([]byte(secretCert.Certificate))
 	crl, err := x509.ParseCRL(block.Bytes)
 	if err != nil {
@@ -140,13 +140,12 @@ func (pki *PKI) loadCrl() error {
 }
 
 func (pki *PKI) loadCerts() error {
-
 	startTime := time.Now()
 	pki.certsmux.Lock()
 	defer pki.certsmux.Unlock()
 
 	if pki.certs == nil {
-		pki.certs = make(map[string]*x509.Certificate)
+		pki.certs = make(map[string]map[string]*x509.Certificate)
 		log.Warningln("init an empty certs list")
 	}
 
@@ -155,8 +154,7 @@ func (pki *PKI) loadCerts() error {
 		return err
 	}
 	if secret == nil || secret.Data == nil {
-		// if path has no certs, exit straight away
-		// before hitting a segfault
+		// if path has no certs, exit straight away to avoid a segfault
 		return nil
 	}
 
@@ -166,19 +164,13 @@ func (pki *PKI) loadCerts() error {
 		return err
 	}
 
-	// reset expired certs to avoid counter creep
 	pki.expiredCertsCounter = 0
-
-	// determine batch size dynamically based on the length of serialsList.Keys
 	batchSizePercentage := viper.GetFloat64("batch_size_percent")
-
-	// use float divison and round
 	batchSize := int(float64(len(serialsList.Keys)) * (batchSizePercentage / 100.0))
 	if batchSize < 1 {
 		batchSize = 1
 	}
 
-	// loop in batches via waitgroups to make this much faster for large vault installations
 	for i := 0; i < len(serialsList.Keys); i += batchSize {
 		end := i + batchSize
 		if end > len(serialsList.Keys) {
@@ -191,7 +183,6 @@ func (pki *PKI) loadCerts() error {
 			log.WithField("batchsize", len(batchKeys)).Infof("processing batch of certs in loadCerts")
 		}
 
-		// add a mutex for protecting concurrent access to the certs map
 		var certsMux sync.Mutex
 		for _, serial := range batchKeys {
 			wg.Add(1)
@@ -211,7 +202,7 @@ func (pki *PKI) loadCerts() error {
 					return
 				}
 
-				block, _ := pem.Decode([]byte([]byte(secretCert.Certificate)))
+				block, _ := pem.Decode([]byte(secretCert.Certificate))
 				if block == nil {
 					log.Errorf("failed to decode PEM block for %s/%s", pki.path, serial)
 					return
@@ -223,29 +214,39 @@ func (pki *PKI) loadCerts() error {
 					return
 				}
 
+				commonName := cert.Subject.CommonName
+				orgUnit := ""
+				// define certs by their commonName and *Subject* (not issuer) OU
+				if len(cert.Subject.OrganizationalUnit) > 0 {
+					orgUnit = cert.Subject.OrganizationalUnit[0]
+				}
+
 				certsMux.Lock()
-				// if already in map check the expiration
-				if certInMap, ok := pki.certs[cert.Subject.CommonName]; ok && certInMap.NotAfter.Unix() < cert.NotAfter.Unix() {
-					pki.certs[cert.Subject.CommonName] = cert
+				if _, exists := pki.certs[commonName]; !exists {
+					pki.certs[commonName] = make(map[string]*x509.Certificate)
+				}
+
+				if existingCert, ok := pki.certs[commonName][orgUnit]; !ok || existingCert.NotAfter.Before(cert.NotAfter) {
+					pki.certs[commonName][orgUnit] = cert
 					if viper.GetBool("verbose") {
 						log.WithFields(logrus.Fields{
-							"organizational_unit": cert.Issuer.OrganizationalUnit,
+							"organizational_unit": orgUnit,
 							"serial_number":       cert.SerialNumber.String(),
-							"common_name":         cert.Subject.CommonName,
+							"common_name":         commonName,
 							"organization":        cert.Subject.Organization,
 							"not_before":          cert.NotBefore,
 							"not_after":           cert.NotAfter,
-						}).Infof("cert in map")
+						}).Infof("updated cert in map")
 					}
 				}
 
-				if cert.NotAfter.Unix() < time.Now().Unix() {
+				if cert.NotAfter.Before(time.Now()) {
 					pki.expiredCertsCounter++
 					if viper.GetBool("verbose") {
 						log.WithFields(logrus.Fields{
-							"organizational_unit": cert.Issuer.OrganizationalUnit,
+							"organizational_unit": orgUnit,
 							"serial_number":       cert.SerialNumber.String(),
-							"common_name":         cert.Subject.CommonName,
+							"common_name":         commonName,
 							"organization":        cert.Subject.Organization,
 							"not_before":          cert.NotBefore,
 							"not_after":           cert.NotAfter,
@@ -253,12 +254,12 @@ func (pki *PKI) loadCerts() error {
 					}
 				}
 
-				if _, ok := pki.certs[cert.Subject.CommonName]; !ok && cert.NotAfter.Unix() > time.Now().Unix() {
-					pki.certs[cert.Subject.CommonName] = cert
-					if err != nil {
-						log.Errorln(err)
-					}
-				}
+				// if _, ok := pki.certs[cert.Subject.CommonName]; !ok && cert.NotAfter.Unix() > time.Now().Unix() {
+				// 	pki.certs[cert.Subject.CommonName] = cert
+				// 	if err != nil {
+				// 		log.Errorln(err)
+				// 	}
+				// }
 				certsMux.Unlock()
 			}(serial)
 		}
@@ -271,7 +272,7 @@ func (pki *PKI) loadCerts() error {
 
 func (pki *PKI) clearCerts() {
 	pki.certsmux.Lock()
-	pki.certs = make(map[string]*x509.Certificate)
+	pki.certs = make(map[string]map[string]*x509.Certificate)
 	pki.certsmux.Unlock()
 }
 
@@ -281,7 +282,8 @@ func (pki *PKI) GetCRL() *pkix.CertificateList {
 	return pki.crl
 }
 
-func (pki *PKI) GetCerts() map[string]*x509.Certificate {
+// Updated GetCerts to return the nested map structure
+func (pki *PKI) GetCerts() map[string]map[string]*x509.Certificate {
 	pki.certsmux.Lock()
 	defer pki.certsmux.Unlock()
 	return pki.certs

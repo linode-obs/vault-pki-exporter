@@ -92,41 +92,42 @@ func PromWatchCerts(pkimon *PKIMon, interval time.Duration) {
 						revokedCerts[revokedCert.SerialNumber.String()] = struct{}{}
 					}
 				}
-				for _, cert := range pki.GetCerts() {
 
-					certlabels := getLabelValues(pkiname, cert)
+				// Loop through common names and organizational units to handle nested map structure
+				for commonName, orgUnits := range pki.GetCerts() {
+					for orgUnit, cert := range orgUnits {
 
-					if viper.GetBool("verbose") {
-						log.WithFields(logrus.Fields{
-							"organizational_unit": cert.Issuer.OrganizationalUnit,
-							"serial_number":       cert.SerialNumber.String(),
-							"common_name":         cert.Subject.CommonName,
-							"organization":        cert.Subject.Organization,
-							"not_before":          cert.NotBefore,
-							"not_after":           cert.NotAfter,
-						}).Infof("cert found")
-					}
-
-					if _, isRevoked := revokedCerts[cert.SerialNumber.String()]; isRevoked {
-						// in case we have prior existing metrics, clear them for revoked certs
-						// seems fine to run in case the metrics don't exist or are already deleted too
-						expiry.DeleteLabelValues(certlabels...)
-						age.DeleteLabelValues(certlabels...)
-						startdate.DeleteLabelValues(certlabels...)
-						enddate.DeleteLabelValues(certlabels...)
+						certlabels := getLabelValues(pkiname, cert)
 
 						if viper.GetBool("verbose") {
-							log.WithField("common_name", cert.Subject.CommonName).Infof("cert found to be revoked")
+							log.WithFields(logrus.Fields{
+								"organizational_unit": orgUnit,
+								"serial_number":       cert.SerialNumber.String(),
+								"common_name":         commonName,
+								"organization":        cert.Subject.Organization,
+								"not_before":          cert.NotBefore,
+								"not_after":           cert.NotAfter,
+							}).Infof("cert found")
 						}
 
-						continue
+						if _, isRevoked := revokedCerts[cert.SerialNumber.String()]; isRevoked {
+							expiry.DeleteLabelValues(certlabels...)
+							age.DeleteLabelValues(certlabels...)
+							startdate.DeleteLabelValues(certlabels...)
+							enddate.DeleteLabelValues(certlabels...)
+
+							if viper.GetBool("verbose") {
+								log.WithField("common_name", commonName).Infof("cert found to be revoked")
+							}
+
+							continue
+						}
+
+						expiry.WithLabelValues(certlabels...).Set(float64(cert.NotAfter.Sub(now).Seconds()))
+						age.WithLabelValues(certlabels...).Set(float64(now.Sub(cert.NotBefore).Seconds()))
+						startdate.WithLabelValues(certlabels...).Set(float64(cert.NotBefore.Unix()))
+						enddate.WithLabelValues(certlabels...).Set(float64(cert.NotAfter.Unix()))
 					}
-
-					expiry.WithLabelValues(certlabels...).Set(float64(cert.NotAfter.Sub(now).Seconds()))
-					age.WithLabelValues(certlabels...).Set(float64(now.Sub(cert.NotBefore).Seconds()))
-					startdate.WithLabelValues(certlabels...).Set(float64(cert.NotBefore.Unix()))
-					enddate.WithLabelValues(certlabels...).Set(float64(cert.NotAfter.Unix()))
-
 				}
 				certcount.WithLabelValues(pkiname).Set(float64(len(pki.certs)))
 				expired_cert_count.WithLabelValues(pkiname).Set(float64(pki.expiredCertsCounter))
@@ -135,7 +136,6 @@ func PromWatchCerts(pkimon *PKIMon, interval time.Duration) {
 			time.Sleep(interval)
 		}
 	}()
-
 }
 
 func getLabelValues(pkiname string, cert *x509.Certificate) []string {
