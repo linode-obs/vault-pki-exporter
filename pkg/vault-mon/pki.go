@@ -14,6 +14,7 @@ import (
 	"github.com/mitchellh/mapstructure"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/viper"
 )
 
@@ -227,14 +228,28 @@ func (pki *PKI) loadCerts() error {
 				if certInMap, ok := pki.certs[cert.Subject.CommonName]; ok && certInMap.NotAfter.Unix() < cert.NotAfter.Unix() {
 					pki.certs[cert.Subject.CommonName] = cert
 					if viper.GetBool("verbose") {
-						log.WithField("common_name", cert.Subject.CommonName).Infof("cert in map")
+						log.WithFields(logrus.Fields{
+							"organizational_unit": cert.Issuer.OrganizationalUnit,
+							"serial_number":       cert.SerialNumber.String(),
+							"common_name":         cert.Subject.CommonName,
+							"organization":        cert.Subject.Organization,
+							"not_before":          cert.NotBefore,
+							"not_after":           cert.NotAfter,
+						}).Infof("cert in map")
 					}
 				}
 
 				if cert.NotAfter.Unix() < time.Now().Unix() {
 					pki.expiredCertsCounter++
 					if viper.GetBool("verbose") {
-						log.WithField("common_name", cert.Subject.CommonName).Infof("cert rejected as expired")
+						log.WithFields(logrus.Fields{
+							"organizational_unit": cert.Issuer.OrganizationalUnit,
+							"serial_number":       cert.SerialNumber.String(),
+							"common_name":         cert.Subject.CommonName,
+							"organization":        cert.Subject.Organization,
+							"not_before":          cert.NotBefore,
+							"not_after":           cert.NotAfter,
+						}).Infof("cert rejected as expired")
 					}
 				}
 
