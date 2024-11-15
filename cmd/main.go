@@ -66,6 +66,16 @@ func init() {
 	if err := viper.BindPFlag("batch_size_percent", flags.Lookup("batch-size-percent")); err != nil {
 		log.Fatal(err)
 	}
+
+	flags.Float64("request-limit", 0.0, "Token-bucket limiter for number of requests per second to Vault when fetching certs (0 = disabled)")
+	if err := viper.BindPFlag("request_limit", flags.Lookup("request-limit")); err != nil {
+		log.Fatal(err)
+	}
+
+	flags.Int("request-limit-burst", 0, "Token-bucket burst limit for number of requests per second to Vault when fetching certs (0 = match 'request-limit' value)")
+	if err := viper.BindPFlag("request_limit_burst", flags.Lookup("request-limit-burst")); err != nil {
+		log.Fatal(err)
+	}
 }
 
 func main() {
